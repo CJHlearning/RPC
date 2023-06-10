@@ -47,19 +47,44 @@ func (s *Server) Serve(conn net.Conn) {
 		return
 	}
 
-	reqBytes := make([]byte, 1024)
-	n, err := conn.Read(reqBytes)
-	if err != nil {
-		if errors.Is(err, os.ErrDeadlineExceeded) {
-			log.Println("conn read request timeout")
-		} else {
-			log.Println("conn read error: " + err.Error())
+	//reqBytes := make([]byte, 1024)
+	//n, err := conn.Read(reqBytes)
+	//if err != nil {
+	//	if errors.Is(err, os.ErrDeadlineExceeded) {
+	//		log.Println("conn read request timeout")
+	//	} else {
+	//		log.Println("conn read error: " + err.Error())
+	//	}
+	//	return
+	//}
+	var reqBytes []byte
+
+	// 创建一个临时缓冲区
+	buf := make([]byte, 1024)
+
+	for {
+		// 读取连接中的数据，并将其存储到临时缓冲区 buf 中
+		n, err := conn.Read(buf)
+		if err != nil {
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				log.Println("conn read request timeout")
+			} else {
+				log.Println("conn read error: " + err.Error())
+			}
+			return
 		}
-		return
+
+		// 将临时缓冲区中的数据追加到响应字节切片中
+		reqBytes = append(reqBytes, buf[:n]...)
+
+		// 检查是否已经读取完所有响应数据
+		if n < len(buf) {
+			break
+		}
 	}
 
 	var req Request
-	err = json.Unmarshal(reqBytes[:n], &req)
+	err := json.Unmarshal(reqBytes, &req)
 	if err != nil {
 		log.Println("request Unmarshal error: " + err.Error())
 		return

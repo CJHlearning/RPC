@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net"
+	"os"
 	"time"
 )
 
@@ -53,15 +54,34 @@ func (c *Client) Call(network string, addr string, method string, params ...inte
 		return nil, err
 	}
 
-	respBytes := make([]byte, 1024)
-	n, err := conn.Read(respBytes)
-	if err != nil {
-		log.Printf("client read response timeout")
-		return nil, err
+	var respBytes []byte
+
+	// 创建一个临时缓冲区
+	buf := make([]byte, 1024)
+
+	for {
+		// 读取连接中的数据，并将其存储到临时缓冲区 buf 中
+		n, err := conn.Read(buf)
+		if err != nil {
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				log.Println("conn read request timeout")
+			} else {
+				log.Println("conn read error: " + err.Error())
+			}
+			return nil, err
+		}
+
+		// 将临时缓冲区中的数据追加到响应字节切片中
+		respBytes = append(respBytes, buf[:n]...)
+
+		// 检查是否已经读取完所有响应数据
+		if n < len(buf) {
+			break
+		}
 	}
 
 	var resp Response
-	err = json.Unmarshal(respBytes[:n], &resp)
+	err = json.Unmarshal(respBytes, &resp)
 	if err != nil {
 		return nil, err
 	}

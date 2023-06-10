@@ -3,6 +3,7 @@ package main
 import (
 	"RPC"
 	"log"
+	"sync"
 	"time"
 )
 
@@ -44,4 +45,15 @@ func main() {
 
 	_, err = client.Call(network, addr, "Loop")
 	log.Println(err)
+
+	var wg sync.WaitGroup
+	wg.Add(10)
+	for i := 0; i < 10; i++ {
+		go func() {
+			result, _ = client.Call(network, addr, "Add", 1, 1)
+			log.Println("Result: ", result)
+			wg.Done()
+		}()
+	}
+	wg.Wait()
 }
