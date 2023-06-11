@@ -21,7 +21,6 @@ func NewClient(timeout time.Duration) *Client {
 
 func (c *Client) Call(network string, addr string, method string, params ...interface{}) (interface{}, error) {
 	conn, err := net.DialTimeout(network, addr, c.Timeout)
-	//conn, err := net.Dial(network, addr)
 	if err != nil {
 		log.Println("dial failure " + err.Error())
 	}
