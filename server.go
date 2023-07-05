@@ -12,25 +12,59 @@ import (
 )
 
 type Server struct {
-	methods map[string]func(params ...interface{}) interface{}
+	Methods map[string]func(params ...interface{}) interface{}
 	Timeout time.Duration
+	Addr    string
 }
 
-func NewServer(timeout time.Duration) *Server {
+func NewServer(timeout time.Duration, serverAddr string) *Server {
 	server := Server{
-		methods: make(map[string]func(params ...interface{}) interface{}),
+		Methods: make(map[string]func(params ...interface{}) interface{}),
 		Timeout: timeout,
+		Addr:    serverAddr,
 	}
-	server.CheckMethod()
+	//server.CheckMethod()
 	return &server
 }
 
-func (s *Server) Register(method string, f func(params ...interface{}) interface{}) {
-	s.methods[method] = f
+func (s *Server) GetAllMethods() []string {
+	var keys []string
+	for key := range s.Methods {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func (s *Server) Register(centerAddr string, method string, f func(params ...interface{}) interface{}) {
+	s.Methods[method] = f
+
+	var message Message
+
+	conn, err := net.DialTimeout("tcp", centerAddr, s.Timeout)
+	if err != nil {
+		log.Println("dial failure " + err.Error())
+		os.Exit(1)
+	}
+
+	defer func(conn net.Conn) {
+		err := conn.Close()
+		if err != nil {
+			log.Println(conn.LocalAddr().String() + "conn close error" + err.Error())
+		}
+	}(conn)
+
+	message.Type = 3
+	message.Payload = map[string]interface{}{
+		"methods": method,
+		"addr":    s.Addr,
+	}
+	l, _ := json.Marshal(message.Payload)
+	message.Length = uint16(len(l))
+	Write(conn, message)
 }
 
 func (s *Server) Remove(method string) {
-	delete(s.methods, method)
+	delete(s.Methods, method)
 }
 
 func (s *Server) Serve(conn net.Conn) {
@@ -47,63 +81,30 @@ func (s *Server) Serve(conn net.Conn) {
 		return
 	}
 
-	//reqBytes := make([]byte, 1024)
-	//n, err := conn.Read(reqBytes)
-	//if err != nil {
-	//	if errors.Is(err, os.ErrDeadlineExceeded) {
-	//		log.Println("conn read request timeout")
-	//	} else {
-	//		log.Println("conn read error: " + err.Error())
-	//	}
-	//	return
-	//}
-	var reqBytes []byte
-
-	// 创建一个临时缓冲区
-	buf := make([]byte, 1024)
-
-	for {
-		// 读取连接中的数据，并将其存储到临时缓冲区 buf 中
-		n, err := conn.Read(buf)
-		if err != nil {
-			if errors.Is(err, os.ErrDeadlineExceeded) {
-				log.Println("conn read request timeout")
-			} else {
-				log.Println("conn read error: " + err.Error())
-			}
-			return
+	var message Message
+	var request Request
+	message = Read(conn)
+	log.Println(message)
+	//log.Println("have read")
+	if message.Type == 4 {
+		r := message.Payload.(map[string]interface{})
+		request.Method = r["method"].(string)
+		if r["params"] == nil {
+			request.Params = nil
+		} else {
+			request.Params = r["params"].([]interface{})
 		}
-
-		// 将临时缓冲区中的数据追加到响应字节切片中
-		reqBytes = append(reqBytes, buf[:n]...)
-
-		// 检查是否已经读取完所有响应数据
-		if n < len(buf) {
-			break
-		}
-	}
-
-	var req Request
-	err := json.Unmarshal(reqBytes, &req)
-	if err != nil {
-		log.Println("request Unmarshal error: " + err.Error())
+	} else {
 		return
 	}
 
-	f, ok := s.methods[req.Method]
+	f, ok := s.Methods[request.Method]
 	if !ok {
-		resp := Response{nil, fmt.Sprintf("Method not found: %s", req.Method)}
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			log.Println("response Marshal error:" + err.Error())
-			return
-		}
-
-		_, err = conn.Write(respBytes)
-		if err != nil {
-			log.Println("conn write error: " + err.Error())
-			return
-		}
+		message.Type = 0
+		message.Payload = errors.New(fmt.Sprintf("Method not found: %s", request.Method))
+		p, _ := json.Marshal(message.Payload)
+		message.Length = uint16(len(p))
+		_ = Write(conn, message)
 		return
 	}
 
@@ -111,13 +112,13 @@ func (s *Server) Serve(conn net.Conn) {
 	ctx, cancel := context.WithTimeout(context.Background(), s.Timeout)
 	defer cancel()
 
-	//remember to set the value of channel's buffer size
+	//要设置chan的size
 	ch := make(chan interface{}, 1)
 	resultCh := make(chan interface{}, 1)
 
-	//use goroutine to avoid blocking when function f couldn't return a result
+	//当f函数无法返回时，使用协程，避免阻塞，主线程超时会退出
 	go func() {
-		result := f(req.Params...)
+		result := f(request.Params...)
 		ch <- result
 		resultCh <- result
 	}()
@@ -126,42 +127,57 @@ func (s *Server) Serve(conn net.Conn) {
 	case <-ctx.Done():
 		if ctx.Err() == context.DeadlineExceeded {
 			log.Println("calling method timeout")
+			message.Type = 0
+			message.Payload = "calling method timeout"
+			message.Length = uint16(len(message.Payload.(string)))
+			//log.Println(message.Length)
+			_ = Write(conn, message)
 		} else {
 			log.Println(ctx.Err())
 		}
 	case <-ch:
 		resp := Response{<-resultCh, ""}
-		respBytes, err := json.Marshal(resp)
-		if err != nil {
-			log.Println("response Marshal error: " + err.Error())
-			return
-		}
 
 		//设置写入超时时间
 		if err := conn.SetWriteDeadline(time.Now().Add(s.Timeout)); err != nil {
 			return
 		}
 
-		_, err = conn.Write(respBytes)
-		if err != nil {
-			if errors.Is(err, os.ErrDeadlineExceeded) {
-				log.Println("conn write response timeout")
-			} else {
-				log.Println("conn write response error: " + err.Error())
-			}
+		message.Type = 5
+		message.Payload = resp
+		respBytes, _ := json.Marshal(resp)
+		message.Length = uint16(len(respBytes))
+		message = Write(conn, message)
+		if message.Type == 0 {
+			log.Printf("server write request error")
 			return
 		}
 	}
 }
 
-func (s *Server) CheckMethod() {
-	s.Register("CheckMethod", func(params ...interface{}) interface{} {
-		var method string
-		method = params[0].(string)
-		if s.methods[method] != nil {
-			return true
-		} else {
-			return false
+func (s *Server) KeepAlive(centerAddr string) {
+	conn, err := net.DialTimeout("tcp", centerAddr, s.Timeout)
+	if err != nil {
+		log.Println("dial failure " + err.Error())
+		os.Exit(1)
+	}
+
+	defer func(conn net.Conn) {
+		err := conn.Close()
+		if err != nil {
+			log.Println(conn.LocalAddr().String() + "conn close error" + err.Error())
 		}
-	})
+	}(conn)
+
+	var message Message
+	message.Type = 2
+	l, _ := json.Marshal(s.Addr)
+	message.Length = uint16(len(l))
+	message.Payload = s.Addr
+
+	//设置写入超时时间
+	if err := conn.SetWriteDeadline(time.Now().Add(s.Timeout)); err != nil {
+		return
+	}
+	Write(conn, message)
 }

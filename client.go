@@ -20,9 +20,11 @@ func NewClient(timeout time.Duration) *Client {
 }
 
 func (c *Client) Call(network string, addr string, method string, params ...interface{}) (interface{}, error) {
+	var message Message
 	conn, err := net.DialTimeout(network, addr, c.Timeout)
 	if err != nil {
 		log.Println("dial failure " + err.Error())
+		os.Exit(1)
 	}
 
 	defer func(conn net.Conn) {
@@ -31,21 +33,25 @@ func (c *Client) Call(network string, addr string, method string, params ...inte
 			log.Println(conn.LocalAddr().String() + "conn close error" + err.Error())
 		}
 	}(conn)
-	req := Request{method, params}
-	reqBytes, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
+
+	var request interface{} = Request{
+		Method: method,
+		Params: params,
 	}
+	message.Type = 4
+	r, _ := json.Marshal(request)
+	message.Length = uint16(len(r))
+	message.Payload = request
 
 	//设置写入超时时间
 	if err := conn.SetWriteDeadline(time.Now().Add(c.Timeout)); err != nil {
 		return nil, err
 	}
 
-	_, err = conn.Write(reqBytes)
-	if err != nil {
-		log.Printf("client write request timeout")
-		return nil, err
+	message = Write(conn, message)
+	if message.Type == 0 {
+		log.Printf("client write request error")
+		return nil, errors.New("client write request error")
 	}
 
 	// 设置读取超时时间
@@ -53,43 +59,20 @@ func (c *Client) Call(network string, addr string, method string, params ...inte
 		return nil, err
 	}
 
-	var respBytes []byte
-
-	// 创建一个临时缓冲区
-	buf := make([]byte, 1024)
-
-	for {
-		// 读取连接中的数据，并将其存储到临时缓冲区 buf 中
-		n, err := conn.Read(buf)
-		if err != nil {
-			if errors.Is(err, os.ErrDeadlineExceeded) {
-				log.Println("conn read request timeout")
-			} else {
-				log.Println("conn read error: " + err.Error())
-			}
-			return nil, err
-		}
-
-		// 将临时缓冲区中的数据追加到响应字节切片中
-		respBytes = append(respBytes, buf[:n]...)
-
-		// 检查是否已经读取完所有响应数据
-		if n < len(buf) {
-			break
+	message = Read(conn)
+	if message.Type == 0 {
+		return nil, errors.New(message.Payload.(string))
+	} else {
+		var response Response
+		resp := message.Payload.(map[string]interface{})
+		response.Error = resp["error"].(string)
+		response.Result = resp["result"].(interface{})
+		if response.Error != "" {
+			return nil, errors.New(response.Error)
+		} else {
+			return response.Result, nil
 		}
 	}
-
-	var resp Response
-	err = json.Unmarshal(respBytes, &resp)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.Error != "" {
-		return nil, errors.New(resp.Error)
-	}
-
-	return resp.Result, nil
 }
 
 func (c *Client) IsExistService(network string, addr string, method string) (bool, error) {
@@ -99,5 +82,59 @@ func (c *Client) IsExistService(network string, addr string, method string) (boo
 		return false, err
 	} else {
 		return exist.(bool), err
+	}
+}
+
+func (c *Client) Find(addr string, method string, params ...interface{}) ([]string, error) {
+	var message Message
+
+	conn, err := net.DialTimeout("tcp", addr, c.Timeout)
+	if err != nil {
+		log.Println("dial failure " + err.Error())
+		os.Exit(1)
+	}
+
+	defer func(conn net.Conn) {
+		err := conn.Close()
+		if err != nil {
+			log.Println(conn.LocalAddr().String() + "conn close error" + err.Error())
+		}
+	}(conn)
+
+	var request interface{} = Request{
+		Method: method,
+		Params: params,
+	}
+	message.Type = 4
+	r, _ := json.Marshal(request)
+	message.Length = uint16(len(r))
+	message.Payload = request
+
+	//设置写入超时时间
+	if err := conn.SetWriteDeadline(time.Now().Add(c.Timeout)); err != nil {
+		return nil, err
+	}
+
+	message = Write(conn, message)
+	if message.Type == 0 {
+		log.Printf("client write request error")
+		return nil, errors.New("client write request error")
+	}
+
+	// 设置读取超时时间
+	if err := conn.SetReadDeadline(time.Now().Add(c.Timeout)); err != nil {
+		return nil, err
+	}
+
+	message = Read(conn)
+	if message.Type == 0 {
+		return nil, errors.New(message.Payload.(string))
+	} else {
+		resp := message.Payload.([]interface{})
+		response := make([]string, len(resp))
+		for i, addr := range resp {
+			response[i] = addr.(string)
+		}
+		return response, nil
 	}
 }
