@@ -130,11 +130,19 @@ func (c *Client) Find(addr string, method string, params ...interface{}) ([]stri
 	if message.Type == 0 {
 		return nil, errors.New(message.Payload.(string))
 	} else {
-		resp := message.Payload.([]interface{})
-		response := make([]string, len(resp))
-		for i, addr := range resp {
-			response[i] = addr.(string)
+		resp := message.Payload
+		if resp == nil {
+			return nil, nil
+		} else {
+			var result []string
+			if response, ok := resp.([]interface{}); ok {
+				for _, item := range response {
+					if str, ok := item.(string); ok {
+						result = append(result, str)
+					}
+				}
+			}
+			return result, nil
 		}
-		return response, nil
 	}
 }

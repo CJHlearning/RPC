@@ -45,7 +45,7 @@ func main() {
 
 	flag.Parse()
 
-	center := RPC.NewCenter(centerAddr+":"+*port, 10*time.Second)
+	center := RPC.NewCenter(centerAddr+":"+*port, 10*time.Second, 5*time.Minute)
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {

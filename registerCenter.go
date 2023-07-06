@@ -10,29 +10,31 @@ import (
 type Center struct {
 	Addr        string
 	Service     map[string][]interface{}
-	IsAvailable map[string]bool
+	IsAvailable map[string]time.Time
+	AliveTime   time.Duration
 	Timeout     time.Duration
 }
 
-func NewCenter(addr string, timeout time.Duration) *Center {
+func NewCenter(addr string, timeout time.Duration, aliveTime time.Duration) *Center {
 	center := Center{
 		Addr:        addr,
 		Service:     make(map[string][]interface{}), //key为addr
-		IsAvailable: make(map[string]bool),          //某个addr的server是否有效
+		IsAvailable: make(map[string]time.Time),     //某个addr的server是否有效
 		Timeout:     timeout,
+		AliveTime:   aliveTime,
 	}
 	return &center
 }
 
 func RegisterToCenter(center Center, method string, addr string) {
 	center.Service[addr] = append(center.Service[addr], method)
-	center.IsAvailable[addr] = true
+	center.IsAvailable[addr] = time.Now().Add(center.AliveTime)
 }
 
 func (c *Center) ServiceFound(method string) []string {
 	var result []string
 	for addr, server := range c.Service {
-		if c.IsAvailable[addr] != true {
+		if c.IsAvailable[addr].Before(time.Now()) {
 			continue
 		}
 		for _, m := range server {
@@ -45,7 +47,7 @@ func (c *Center) ServiceFound(method string) []string {
 }
 
 func (c *Center) KeepAlive(addr string) {
-	c.IsAvailable[addr] = true
+	c.IsAvailable[addr] = time.Now().Add(c.AliveTime)
 }
 
 func (c *Center) Serve(conn net.Conn) {
