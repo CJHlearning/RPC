@@ -90,6 +90,7 @@ func main() {
 		fmt.Println("Failed to get IP addresses for", hostname, ":", err)
 		return
 	}
+
 	for _, addr := range addrs {
 		serverAddr = addr.To4().String()
 	}
@@ -98,6 +99,7 @@ func main() {
 	port := flag.String("p", "", "服务器监听的端口号(必须输入)")
 	centerAddr := flag.String("c", "", "注册中心地址(必须输入) 格式：'ip:port'")
 	help := flag.Bool("h", false, "打印帮助参数")
+	ipv6 := flag.String("ip6", "", "服务器ipv6地址")
 
 	flag.Parse()
 
@@ -117,7 +119,12 @@ func main() {
 		os.Exit(0)
 	}
 
+	if *ipv6 != "" {
+		serverAddr = *ipv6
+	}
+
 	server := RPC.NewServer(1*time.Second, serverAddr+":"+*port)
+	log.Println(serverAddr)
 	server.Register(*centerAddr, "Add", Add)
 	server.Register(*centerAddr, "Sub", Sub)
 	server.Register(*centerAddr, "Mul", Mul)

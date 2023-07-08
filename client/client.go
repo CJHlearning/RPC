@@ -35,6 +35,7 @@ func main() {
 	var d interface{} = 4
 
 	addr, err := client.Find(centerAddr, "Add", a, b)
+	log.Println(addr)
 	if addr == nil {
 		log.Println("server don't exist")
 	} else {
@@ -157,8 +158,8 @@ func main() {
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(1000)
-	for i := 0; i < 1000; i++ {
+	wg.Add(10)
+	for i := 0; i < 10; i++ {
 		go func() {
 			addr, err = client.Find(centerAddr, "Add", 1, 1)
 			if addr == nil {
